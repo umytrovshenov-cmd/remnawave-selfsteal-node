@@ -1,0 +1,36 @@
+{
+  "log": { "loglevel": "warning" },
+  "dns": {
+    "servers": [
+      "1.1.1.1",
+      { "address": "223.5.5.5", "domains": ["geosite:cn"], "expectIPs": ["geoip:cn"] }
+    ],
+    "queryStrategy": "UseIPv4"
+  },
+  "routing": {
+    "domainStrategy": "IPIfNonMatch",
+    "rules": [
+      { "ip": ["geoip:private"], "outboundTag": "direct" },
+      { "domain": ["geosite:private"], "outboundTag": "direct" },
+      { "protocol": ["bittorrent"], "outboundTag": "direct" },
+      { "domain": ["domain:gstatic.com", "domain:googleapis.cn"], "outboundTag": "proxy" },
+      { "domain": ["geosite:cn"], "outboundTag": "direct" },
+      { "ip": ["geoip:cn"], "outboundTag": "direct" }
+    ]
+  },
+  "inbounds": [
+    {
+      "tag": "socks", "listen": "127.0.0.1", "port": 10808, "protocol": "socks",
+      "settings": { "auth": "noauth", "udp": true },
+      "sniffing": { "enabled": true, "routeOnly": false, "destOverride": ["http", "tls", "quic"] }
+    },
+    {
+      "tag": "http", "listen": "127.0.0.1", "port": 10809, "protocol": "http",
+      "sniffing": { "enabled": true, "routeOnly": false, "destOverride": ["http", "tls", "quic"] }
+    }
+  ],
+  "outbounds": [
+    { "tag": "direct", "protocol": "freedom" },
+    { "tag": "block", "protocol": "blackhole" }
+  ]
+}

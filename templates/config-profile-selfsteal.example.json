@@ -1,0 +1,39 @@
+{
+  "log": { "loglevel": "none" },
+  "inbounds": [
+    {
+      "tag": "SS-learning-ornek-com",
+      "port": 443,
+      "listen": "0.0.0.0",
+      "protocol": "vless",
+      "settings": { "clients": [], "decryption": "none" },
+      "sniffing": { "enabled": true, "routeOnly": true, "destOverride": ["http", "tls", "quic"] },
+      "streamSettings": {
+        "network": "raw",
+        "security": "reality",
+        "realitySettings": {
+          "show": false,
+          "xver": 0,
+          "target": "127.0.0.1:9443",
+          "serverNames": ["learning.ornek.com"],
+          "privateKey": "BURAYA_PRIVATE_KEY",
+          "shortIds": ["BURAYA_SHORT_ID"]
+        }
+      }
+    }
+  ],
+  "outbounds": [
+    { "tag": "DIRECT", "protocol": "freedom" },
+    { "tag": "BLOCK", "protocol": "blackhole" }
+  ],
+  "routing": {
+    "rules": [
+      { "ip": ["geoip:private"], "outboundTag": "BLOCK" },
+      { "domain": ["geosite:private"], "outboundTag": "BLOCK" },
+      { "protocol": ["bittorrent"], "outboundTag": "BLOCK" },
+      { "domain": ["domain:gstatic.com", "domain:google.com", "domain:googleapis.cn", "domain:cloudflare.com"], "outboundTag": "DIRECT" },
+      { "ip": ["geoip:cn"], "outboundTag": "BLOCK" },
+      { "domain": ["geosite:cn"], "outboundTag": "BLOCK" }
+    ]
+  }
+}

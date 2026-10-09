@@ -1,0 +1,63 @@
+{
+  "remnawave": {
+    "injectHosts": [
+      { "selector": { "type": "remarkRegex", "pattern": "^JP-" }, "tagPrefix": "proxy" }
+    ]
+  },
+  "burstObservatory": {
+    "subjectSelector": ["proxy"],
+    "pingConfig": {
+      "destination": "http://www.gstatic.com/generate_204",
+      "connectivity": "",
+      "interval": "30s",
+      "sampling": 1,
+      "timeout": "5s"
+    }
+  },
+  "log": { "loglevel": "warning" },
+  "dns": {
+    "servers": [
+      "1.1.1.1",
+      { "address": "223.5.5.5", "domains": ["geosite:cn"], "expectIPs": ["geoip:cn"] }
+    ],
+    "queryStrategy": "UseIPv4"
+  },
+  "routing": {
+    "domainStrategy": "IPIfNonMatch",
+    "balancers": [
+      {
+        "tag": "JP-Balancer",
+        "selector": ["proxy"],
+        "strategy": {
+          "type": "leastLoad",
+          "settings": { "maxRTT": "3s", "expected": 2, "baselines": ["3s"], "tolerance": 0.01 }
+        },
+        "fallbackTag": "proxy"
+      }
+    ],
+    "rules": [
+      { "ip": ["geoip:private"], "outboundTag": "direct" },
+      { "domain": ["geosite:private"], "outboundTag": "direct" },
+      { "protocol": ["bittorrent"], "outboundTag": "direct" },
+      { "domain": ["domain:gstatic.com", "domain:googleapis.cn"], "balancerTag": "JP-Balancer" },
+      { "domain": ["geosite:cn"], "outboundTag": "direct" },
+      { "ip": ["geoip:cn"], "outboundTag": "direct" },
+      { "network": "tcp,udp", "balancerTag": "JP-Balancer" }
+    ]
+  },
+  "inbounds": [
+    {
+      "tag": "socks", "listen": "127.0.0.1", "port": 10808, "protocol": "socks",
+      "settings": { "auth": "noauth", "udp": true },
+      "sniffing": { "enabled": true, "routeOnly": false, "destOverride": ["http", "tls", "quic"] }
+    },
+    {
+      "tag": "http", "listen": "127.0.0.1", "port": 10809, "protocol": "http",
+      "sniffing": { "enabled": true, "routeOnly": false, "destOverride": ["http", "tls", "quic"] }
+    }
+  ],
+  "outbounds": [
+    { "tag": "direct", "protocol": "freedom" },
+    { "tag": "block", "protocol": "blackhole" }
+  ]
+}
