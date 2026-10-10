@@ -35,6 +35,8 @@ Her node için Hosts → **+** butonuna bas:
 
 Gizli host'lar abonelikte ayrı ayrı görünmez; sadece gruba eklenir.
 
+> Bir node'un birden fazla alan adı varsa her alan adı için ayrı bir gizli host oluşturabilirsin (örn. `JP-1a`, `JP-1b`). Biri engellenirse balancer diğerine geçer.
+
 > İpucu: Bir node'u hem tek başına hem de grupta göstermek istiyorsan, normal (görünür) host'unu silme. Aynı inbound için ek olarak gizli bir `JP-x` host'u oluştur.
 
 ## 2. Grup template'i

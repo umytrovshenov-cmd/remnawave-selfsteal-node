@@ -15,7 +15,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/umytrovshenov-cmd/remnawave-
 
 Script sırayla şunları sorar:
 
-1. **Alan adı:** Örneğin `learning.ornek.com`. A kaydı bu sunucunun IP'sine yönlü olmalı.
+1. **Alan adı:** Örneğin `learning.ornek.com`. A kaydı bu sunucunun IP'sine yönlü olmalı. Birden fazla alan adı vereceksen virgülle ayır: `learning.ornek.com,docs.baska.net`.
 2. **E-posta:** Let's Encrypt için, boş bırakılabilir.
 3. **docker-compose.yml:** Remnawave panelinde node eklerken gösterilen içeriği yapıştır, ardından yeni bir satıra `END` yaz.
 4. **Reality private key:** Boş bırakırsan yenisi üretilir.
@@ -26,11 +26,11 @@ Kurulum sonunda panele yapıştıracağın **hazır Config Profile JSON'u** ekra
 ## Ne yapar?
 
 1. **BBR**'ı açar.
-2. Rastgele seçilen üç şablondan biriyle **sahte bir web sitesi** oluşturur (blog, stüdyo veya doküman sitesi).
+2. Rastgele seçilen üç şablondan biriyle **sahte bir web sitesi** oluşturur (blog, stüdyo veya doküman sitesi). Birden fazla alan adı varsa her birine farklı bir site kurulur.
 3. **nginx**'i kurar:
    - `127.0.0.1:9443` üzerinde TLS 1.3 + HTTP/2 ile siteyi sunar. Bu adres Reality'nin hedefidir.
    - 80 portundan HTTPS'e yönlendirir; Let's Encrypt doğrulaması da bu port üzerinden yapılır.
-4. **Let's Encrypt** sertifikası alır. Sertifika otomatik yenilenir ve yenilenince nginx yeniden yüklenir.
+4. **Let's Encrypt** sertifikası alır; birden fazla alan adı varsa her birine ayrı sertifika. Sertifikalar otomatik yenilenir ve yenilenince nginx yeniden yüklenir.
 5. **Docker**'ı kurar ve **Remnawave Node**'u yapıştırdığın docker-compose ile başlatır.
 6. UFW aktifse 80, 443 ve NODE_PORT portlarını açar.
 7. **Reality anahtarı ve shortId** üretir, hazır Config Profile JSON'unu oluşturur.
@@ -52,7 +52,7 @@ Hepsi opsiyoneldir; verilmeyenler sorulur.
 
 | Parametre | Açıklama |
 |---|---|
-| `-d, --domain` | Bu sunucunun alan adı |
+| `-d, --domain` | Bu sunucunun alan adı. Birden fazlası için virgülle ayır veya `-d`'yi tekrarla |
 | `-e, --email` | Let's Encrypt e-postası |
 | `-c, --compose` | docker-compose.yml dosya yolu (yapıştırmak yerine) |
 | `-k, --private-key` | Mevcut Reality private key |
@@ -91,7 +91,7 @@ cat /root/remnawave-node/<alan-adı>/node-info.txt
 
 ## Dokümanlar
 
-- [Tek sunucu kurulumu](docs/01-tek-sunucu.md): panelde node ekleme → script → Config Profile → Host
+- [Tek sunucu kurulumu](docs/01-tek-sunucu.md): panelde node ekleme → script → Config Profile → Host. Bir sunucuya birden fazla alan adı da burada anlatılıyor
 - [Grup sunucu (balancer + otomatik yedek)](docs/02-grup-sunucu.md): birden fazla sunucuyu müşteriye tek sunucu olarak gösterme
 - [Sorun giderme](docs/03-sorun-giderme.md)
 

@@ -96,6 +96,39 @@ Hosts → **+** butonuna bas ve şunları doldur:
    - `myip.ipip.net` → kendi Çin IP'n görünmeli (Çin trafiği direct gidiyor).
    - `ip.sb` → sunucunun IP'si görünmeli (geri kalan trafik VPN'den gidiyor).
 
+## Bir sunucuya birden fazla alan adı
+
+Script bunu destekler. Alan adı sorusunda virgülle ayırarak yaz:
+
+```
+learning.ornek.com,docs.baska-site.net
+```
+
+Script her alan adı için şunları yapar:
+- Ayrı bir Let's Encrypt sertifikası alır.
+- Farklı bir sahte site kurar.
+- nginx'e ayrı bir bölüm ekler; nginx gelen SNI'ya göre doğru siteyi ve sertifikayı gösterir.
+- Hepsini Config Profile'daki `serverNames` listesine yazar.
+
+Hepsinin A kaydı aynı sunucunun IP'sine yönlü olmalı.
+
+**Remnawave tarafı:**
+- Tek bir Config Profile ve tek bir inbound yeterli.
+- **Her alan adı için ayrı bir Host** oluştur: aynı inbound, Address = SNI = o alan adı.
+
+**Sonradan alan adı eklemek:**
+1. Yeni alan adının A kaydını ekle.
+2. Scripti **bütün alan adlarıyla** tekrar çalıştır (örn. `a.com,b.net,c.org`):
+   - Mevcut sertifikalar ve siteler korunur.
+   - docker-compose için "Aynen kullanılsın mı?" sorusuna evet de.
+   - Önceki anahtar sorusuna da evet de.
+3. Panelde Config Profile'daki `serverNames` listesini scriptin verdiği yeni listeyle güncelle.
+4. Yeni alan adı için bir Host ekle.
+
+**Ne işe yarar, ne işe yaramaz:**
+- Bir alan adı engellenirse diğer alan adları çalışmaya devam eder.
+- IP adresi engellenirse hepsi birlikte düşer. IP'ye karşı yedek için farklı sunucular ve grup sunucu kullan.
+
 ## Notlar
 
 - **Her node için:** farklı alt alan adı, farklı inbound etiketi ve ayrı bir Config Profile kullan.

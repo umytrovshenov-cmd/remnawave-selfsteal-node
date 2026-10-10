@@ -15,7 +15,8 @@
 #   4. Reality anahtarı + shortId üretir ve panele yapıştırılacak hazır Config Profile JSON'unu verir
 #
 # Parametreler (hepsi opsiyonel; verilmezse sorulur):
-#   -d, --domain DOMAIN       Bu sunucunun alan adı (A kaydı bu sunucunun IP'sine yönlü olmalı)
+#   -d, --domain DOMAIN       Bu sunucunun alan adı. Birden fazla için virgülle ayır
+#                             ya da -d'yi tekrarla (hepsinin A kaydı bu sunucuya yönlü olmalı)
 #   -e, --email EMAIL         Let's Encrypt e-postası
 #   -c, --compose FILE        Remnawave panelinden alınmış docker-compose.yml dosyası
 #   -k, --private-key KEY     Mevcut Reality private key (verilmezse yenisi üretilir)
@@ -27,7 +28,7 @@
 #
 set -Eeuo pipefail
 
-SCRIPT_VERSION="1.0.0"
+SCRIPT_VERSION="1.1.0"
 
 # ---------------------------------------------------------------- ayarlar ---
 INSTALL_DIR="${INSTALL_DIR:-/opt/remnanode}"
@@ -39,7 +40,9 @@ OUT_BASE="${OUT_BASE:-/root/remnawave-node}"
 LOG_FILE="${LOG_FILE:-/var/log/remnawave-selfsteal-install.log}"
 TARGET_PORT="9443"
 
-DOMAIN="${DOMAIN:-}"
+DOMAIN=""                    # birincil (ilk) alan adı
+DOMAINS=()                   # bu sunucunun bütün alan adları
+DOMAIN_INPUT="${DOMAIN_INPUT:-}"
 EMAIL="${EMAIL:-}"
 COMPOSE_FILE=""
 PRIVATE_KEY="${PRIVATE_KEY:-}"
@@ -105,7 +108,8 @@ Kullanım:
   bash <(curl -fsSL https://raw.githubusercontent.com/umytrovshenov-cmd/remnawave-selfsteal-node/main/install.sh) [parametreler]
 
 Parametreler (hepsi opsiyonel; verilmezse sorulur):
-  -d, --domain DOMAIN       Bu sunucunun alan adı (A kaydı bu sunucunun IP'sine yönlü olmalı)
+  -d, --domain DOMAIN       Bu sunucunun alan adı. Birden fazla için virgülle ayır
+                            (örn. -d a.ornek.com,b.ornek2.com) ya da -d'yi tekrarla
   -e, --email EMAIL         Let's Encrypt e-postası
   -c, --compose FILE        Remnawave panelinden alınmış docker-compose.yml dosyası
   -k, --private-key KEY     Mevcut Reality private key (verilmezse yenisi üretilir)
@@ -123,7 +127,7 @@ b64url() { base64 -w0 | tr '+/' '-_' | tr -d '='; }
 parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      -d|--domain)       DOMAIN="${2:-}"; shift 2 ;;
+      -d|--domain)       DOMAIN_INPUT+="${2:-},"; shift 2 ;;
       -e|--email)        EMAIL="${2:-}"; shift 2 ;;
       -c|--compose)      COMPOSE_FILE="${2:-}"; shift 2 ;;
       -k|--private-key)  PRIVATE_KEY="${2:-}"; shift 2 ;;
@@ -181,6 +185,19 @@ valid_domain() {
   [[ "$1" =~ ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$ ]]
 }
 
+# "a.com, b.com c.com" -> DOMAINS=(a.com b.com c.com); geçersiz varsa 1 döner
+parse_domains() {
+  local raw d bad=0
+  DOMAINS=()
+  raw="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr ',; \t' '\n\n\n\n')"
+  while IFS= read -r d; do
+    if [[ -z "$d" ]]; then continue; fi
+    if ! valid_domain "$d"; then warn "Geçersiz alan adı: '$d'"; bad=1; continue; fi
+    if [[ " ${DOMAINS[*]} " != *" $d "* ]]; then DOMAINS+=("$d"); fi
+  done <<<"$raw"
+  [[ $bad -eq 0 && ${#DOMAINS[@]} -gt 0 ]]
+}
+
 read_compose_paste() {
   COMPOSE_TMP="$(mktemp)"
   printf '\n%sRemnawave panelinde node eklerken gösterilen docker-compose.yml içeriğini kopyalayıp buraya yapıştır.%s\n' "$W" "$N"
@@ -213,16 +230,19 @@ collect_inputs() {
   step "Bilgiler"
 
   while true; do
-    [[ -n "$DOMAIN" ]] || DOMAIN="$(ask "Bu sunucunun alan adı (örn. learning.ornek.com)")"
-    DOMAIN="$(printf '%s' "$DOMAIN" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
-    valid_domain "$DOMAIN" && break
-    warn "Geçersiz alan adı: '$DOMAIN'"
-    DOMAIN=""
-    [[ $ASSUME_YES -eq 1 ]] && die "Geçerli bir alan adı ver (-d)."
+    [[ -n "$DOMAIN_INPUT" ]] || DOMAIN_INPUT="$(ask "Alan adı (birden fazlaysa virgülle ayır, örn. learning.ornek.com,docs.ornek2.com)")"
+    if parse_domains "$DOMAIN_INPUT"; then break; fi
+    DOMAIN_INPUT=""
+    [[ $ASSUME_YES -eq 1 ]] && die "Geçerli alan adı ver (-d)."
   done
-  if [[ "$DOMAIN" =~ (vpn|proxy|xray|v2ray|vless|reality|node|tunnel) ]]; then
-    warn "Alan adında dikkat çekici bir kelime var ($DOMAIN). SNI açık metin olarak görünür; sıradan bir ad önerilir."
-    confirm "Bu alan adıyla devam edilsin mi?" || exit 1
+  DOMAIN="${DOMAINS[0]}"
+  local d flagged=""
+  for d in "${DOMAINS[@]}"; do
+    if [[ "$d" =~ (vpn|proxy|xray|v2ray|vless|reality|node|tunnel) ]]; then flagged+="$d "; fi
+  done
+  if [[ -n "$flagged" ]]; then
+    warn "Şu alan adlarında dikkat çekici kelime var: $flagged— SNI açık metin olarak görünür; sıradan adlar önerilir."
+    confirm "Bu alan adlarıyla devam edilsin mi?" || exit 1
   fi
 
   if [[ -z "$EMAIL" && $ASSUME_YES -eq 0 ]]; then
@@ -264,7 +284,7 @@ collect_inputs() {
   fi
 
   step "Özet"
-  printf '  Alan adı        : %s\n' "$DOMAIN"
+  printf '  Alan adları     : %s\n' "${DOMAINS[*]}"
   printf '  E-posta         : %s\n' "${EMAIL:-(yok)}"
   printf '  docker-compose  : %s (NODE_PORT=%s, konteyner=%s)\n' "$([[ $COMPOSE_MODE == keep ]] && echo mevcut || echo yeni)" "$NODE_PORT" "$NODE_CONTAINER"
   printf '  Reality anahtarı: %s\n' "$([[ -n $PRIVATE_KEY ]] && echo 'verilen anahtar' || echo 'yeni üretilecek')"
@@ -300,18 +320,22 @@ check_dns() {
   [[ -n "$PUBLIC_IP" ]] && info "Sunucunun genel IP'si: $PUBLIC_IP" || warn "Genel IP tespit edilemedi."
   [[ $SKIP_DNS_CHECK -eq 1 ]] && { warn "DNS kontrolü atlandı."; return 0; }
 
-  local resolved
-  resolved="$(dig +short A "$DOMAIN" @1.1.1.1 2>/dev/null | grep -E '^[0-9.]+$' || true)"
-  [[ -n "$resolved" ]] || resolved="$(getent ahostsv4 "$DOMAIN" 2>/dev/null | awk '{print $1}' | sort -u || true)"
-  [[ -n "$resolved" ]] || die "$DOMAIN çözülemedi. DNS panelinde A kaydını ekle (Cloudflare kullanıyorsan gri bulut / DNS only) ve birkaç dakika sonra tekrar dene."
-
-  info "$DOMAIN -> $(echo "$resolved" | tr '\n' ' ')"
-  if [[ -n "$PUBLIC_IP" ]] && ! grep -qx "$PUBLIC_IP" <<<"$resolved"; then
-    warn "$DOMAIN bu sunucunun IP'sine ($PUBLIC_IP) çıkmıyor!"
-    warn "Self-steal'in amacı SNI ile IP'nin tutarlı olması. A kaydını düzelt; Cloudflare'de proxy (turuncu bulut) kapalı olmalı."
+  local d resolved mismatch=""
+  for d in "${DOMAINS[@]}"; do
+    resolved="$(dig +short A "$d" @1.1.1.1 2>/dev/null | grep -E '^[0-9.]+$' || true)"
+    [[ -n "$resolved" ]] || resolved="$(getent ahostsv4 "$d" 2>/dev/null | awk '{print $1}' | sort -u || true)"
+    [[ -n "$resolved" ]] || die "$d çözülemedi. DNS panelinde A kaydını ekle (Cloudflare kullanıyorsan gri bulut / DNS only) ve birkaç dakika sonra tekrar dene."
+    if [[ -n "$PUBLIC_IP" ]] && ! grep -qx "$PUBLIC_IP" <<<"$resolved"; then
+      warn "$d -> $(echo "$resolved" | tr '\n' ' ')(bu sunucu DEĞİL)"
+      mismatch+="$d "
+    else
+      ok "$d -> bu sunucu"
+    fi
+  done
+  if [[ -n "$mismatch" ]]; then
+    warn "Şu alan adları bu sunucunun IP'sine ($PUBLIC_IP) çıkmıyor: $mismatch"
+    warn "Self-steal'in amacı SNI ile IP'nin tutarlı olması. A kayıtlarını düzelt; Cloudflare'de proxy (turuncu bulut) kapalı olmalı."
     confirm "Yine de devam edilsin mi?" || exit 1
-  else
-    ok "Alan adı bu sunucuya yönlü"
   fi
 }
 
@@ -331,9 +355,9 @@ EOF
 }
 
 # -------------------------------------------------------------- sahte site ---
-brand_from_domain() {
+brand_from_domain() { # brand_from_domain DOMAIN
   local -a l
-  IFS=. read -r -a l <<<"$DOMAIN"
+  IFS=. read -r -a l <<<"$1"
   local n=${#l[@]} raw out="" w
   raw="${l[n-2]}"
   if [[ $n -ge 3 && "$raw" =~ ^(co|com|net|org|gov|edu|ac|or|ne|go)$ ]]; then raw="${l[n-3]}"; fi
@@ -447,67 +471,73 @@ site_docs() {
 <p><strong>Where can I report issues?</strong><br>Please use the internal tracker.</p></div></div>"
 }
 
-setup_site() {
-  step "Web sitesi"
-  SITE_ROOT="$SITE_ROOT_BASE/$DOMAIN"
+setup_site_for() { # setup_site_for DOMAIN TEMPLATE_INDEX
+  local d="$1" tpl="$2"
+  SITE_ROOT="$SITE_ROOT_BASE/$d"
   if [[ -f "$SITE_ROOT/index.html" ]]; then
-    ok "Mevcut site korunuyor: $SITE_ROOT"
+    ok "$d: mevcut site korunuyor"
     return 0
   fi
   mkdir -p "$SITE_ROOT/assets"
-  BRAND="$(brand_from_domain)"; YEAR="$(date +%Y)"
+  BRAND="$(brand_from_domain "$d")"; YEAR="$(date +%Y)"
   local accents=("#2563eb" "#0f766e" "#7c3aed" "#c2410c" "#0369a1" "#be123c" "#4d7c0f")
   site_css "${accents[RANDOM % ${#accents[@]}]}" >"$SITE_ROOT/assets/style.css"
-  case $((RANDOM % 3)) in
+  case "$tpl" in
     0) site_notes ;;
     1) site_studio ;;
-    2) site_docs ;;
+    *) site_docs ;;
   esac
   page "$SITE_ROOT/404.html" "Not found — $SITE_TITLE" "<h1>Page not found</h1><p><a href=\"/\">Back to home</a></p>"
   printf 'User-agent: *\nAllow: /\n' >"$SITE_ROOT/robots.txt"
+  ok "$d: site oluşturuldu ($SITE_TITLE)"
+}
+
+setup_sites() {
+  step "Web siteleri"
+  local d i=0 start=$((RANDOM % 3))
+  for d in "${DOMAINS[@]}"; do
+    setup_site_for "$d" $(( (start + i) % 3 ))   # her alan adına farklı şablon
+    i=$((i + 1))
+  done
   chmod -R a+rX "$SITE_ROOT_BASE"
-  ok "Site oluşturuldu: $SITE_TITLE ($SITE_ROOT)"
-  info "İstersen $SITE_ROOT içindeki dosyaları kendi içeriğinle değiştirebilirsin."
+  info "Siteler: $SITE_ROOT_BASE/<alan-adı>/ — istersen kendi içeriğinle değiştirebilirsin."
 }
 
 # ---------------------------------------------------------------- nginx -----
 ipv6_listen() { [[ -f /proc/net/if_inet6 ]] && printf '    listen [::]:80 default_server;\n' || true; }
 
-write_nginx_http_only() {
-  cat >"$NGINX_CONF" <<EOF
-# remnawave-selfsteal-node — $DOMAIN (geçici: sadece HTTP / ACME)
-server {
-    listen 80 default_server;
-$(ipv6_listen)
-    server_name _;
-    server_tokens off;
-    location /.well-known/acme-challenge/ { root ${ACME_ROOT}; }
-    location / { return 301 https://\$host\$request_uri; }
-}
-EOF
-}
-
-write_nginx_full() {
-  cat >"$NGINX_CONF" <<EOF
-# remnawave-selfsteal-node — $DOMAIN
-# Reality hedefi: Xray, doğrulanmamış bağlantıları buraya (127.0.0.1:${TARGET_PORT}) yönlendirir.
+write_nginx_conf() {
+  local d tls=()
+  for d in "${DOMAINS[@]}"; do
+    if [[ -f "$LE_LIVE_DIR/$d/fullchain.pem" ]]; then tls+=("$d"); fi
+  done
+  {
+    echo "# remnawave-selfsteal-node — ${DOMAINS[*]}"
+    echo "# Reality hedefi: Xray, doğrulanmamış bağlantıları 127.0.0.1:${TARGET_PORT} adresine yönlendirir."
+    echo "# nginx, gelen SNI'ya göre doğru siteyi ve sertifikayı seçer."
+    echo
+    for d in "${tls[@]}"; do
+      cat <<EOF
 server {
     listen 127.0.0.1:${TARGET_PORT} ssl http2;
-    server_name ${DOMAIN};
+    server_name ${d};
     server_tokens off;
 
-    ssl_certificate     ${LE_LIVE_DIR}/${DOMAIN}/fullchain.pem;
-    ssl_certificate_key ${LE_LIVE_DIR}/${DOMAIN}/privkey.pem;
+    ssl_certificate     ${LE_LIVE_DIR}/${d}/fullchain.pem;
+    ssl_certificate_key ${LE_LIVE_DIR}/${d}/privkey.pem;
     ssl_protocols TLSv1.3;
     ssl_session_cache shared:SelfSteal:10m;
     ssl_session_timeout 1d;
 
-    root ${SITE_ROOT_BASE}/${DOMAIN};
+    root ${SITE_ROOT_BASE}/${d};
     index index.html;
     error_page 404 /404.html;
     location / { try_files \$uri \$uri/ =404; }
 }
 
+EOF
+    done
+    cat <<EOF
 server {
     listen 80 default_server;
 $(ipv6_listen)
@@ -517,43 +547,50 @@ $(ipv6_listen)
     location / { return 301 https://\$host\$request_uri; }
 }
 EOF
+  } >"$NGINX_CONF"
 }
 
 setup_nginx_http() {
-  step "nginx (HTTP)"
+  step "nginx"
   rm -f /etc/nginx/sites-enabled/default
   mkdir -p "$ACME_ROOT"
-  write_nginx_http_only
+  write_nginx_conf            # sertifikası olan alan adları için TLS, diğerleri için sadece HTTP/ACME
   run nginx -t
   run systemctl enable nginx
   run systemctl restart nginx
-  ok "nginx 80 portunda çalışıyor"
+  ok "nginx çalışıyor"
 }
 
-issue_certificate() {
-  step "Let's Encrypt sertifikası"
-  local email_args=(--register-unsafely-without-email)
+issue_certificates() {
+  step "Let's Encrypt sertifikaları (her alan adı için ayrı)"
+  local d email_args=(--register-unsafely-without-email)
   [[ -n "$EMAIL" ]] && email_args=(-m "$EMAIL")
-  if ! certbot certonly --webroot -w "$ACME_ROOT" -d "$DOMAIN" --cert-name "$DOMAIN" \
-        "${email_args[@]}" --agree-tos --non-interactive --keep-until-expiring \
-        --deploy-hook "systemctl reload nginx" >>"$LOG_FILE" 2>&1; then
-    tail -n 15 "$LOG_FILE" >&2 || true
-    die "Sertifika alınamadı. Kontrol et: (1) A kaydı bu sunucuya yönlü mü, (2) bulut firewall'unda 80 portu açık mı. Ayrıntı: $LOG_FILE"
-  fi
-  [[ -f "$LE_LIVE_DIR/$DOMAIN/fullchain.pem" ]] || die "Sertifika dosyası bulunamadı: $LE_LIVE_DIR/$DOMAIN/fullchain.pem"
-  ok "Sertifika hazır (otomatik yenileme açık)"
+  for d in "${DOMAINS[@]}"; do
+    if ! certbot certonly --webroot -w "$ACME_ROOT" -d "$d" --cert-name "$d" \
+          "${email_args[@]}" --agree-tos --non-interactive --keep-until-expiring \
+          --deploy-hook "systemctl reload nginx" >>"$LOG_FILE" 2>&1; then
+      tail -n 15 "$LOG_FILE" >&2 || true
+      die "$d için sertifika alınamadı. Kontrol et: (1) A kaydı bu sunucuya yönlü mü, (2) bulut firewall'unda 80 portu açık mı. Ayrıntı: $LOG_FILE"
+    fi
+    [[ -f "$LE_LIVE_DIR/$d/fullchain.pem" ]] || die "Sertifika dosyası bulunamadı: $LE_LIVE_DIR/$d/fullchain.pem"
+    ok "$d: sertifika hazır"
+  done
+  info "Sertifikalar otomatik yenilenir."
 }
 
 setup_nginx_tls() {
   step "nginx (HTTPS hedef, 127.0.0.1:$TARGET_PORT)"
-  write_nginx_full
+  write_nginx_conf
   run nginx -t
-  run systemctl restart nginx
-  local code
-  code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 \
-          --resolve "$DOMAIN:$TARGET_PORT:127.0.0.1" "https://$DOMAIN:$TARGET_PORT/" 2>>"$LOG_FILE" || true)"
-  [[ "$code" == "200" ]] || die "nginx testi başarısız (HTTP $code). Ayrıntı: $LOG_FILE"
-  ok "Sahte site 127.0.0.1:$TARGET_PORT üzerinde çalışıyor (HTTP 200)"
+  run systemctl reload-or-restart nginx
+  sleep 1
+  local d code
+  for d in "${DOMAINS[@]}"; do
+    code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 \
+            --resolve "$d:$TARGET_PORT:127.0.0.1" "https://$d:$TARGET_PORT/" 2>>"$LOG_FILE" || true)"
+    [[ "$code" == "200" ]] || die "$d: nginx testi başarısız (HTTP $code). Ayrıntı: $LOG_FILE"
+    ok "$d: site 127.0.0.1:$TARGET_PORT üzerinde çalışıyor (HTTP 200)"
+  done
 }
 
 # --------------------------------------------------------------- docker -----
@@ -626,11 +663,14 @@ x25519_pub_from_priv() { # base64url private -> base64url public
 
 generate_reality_material() {
   step "Reality anahtarları"
-  local prev="$OUT_BASE/$DOMAIN/config-profile.json" prev_key="" prev_sid=""
-  if [[ -z "$PRIVATE_KEY" && -f "$prev" ]]; then
+  local prev="" prev_key="" prev_sid="" d
+  for d in "${DOMAINS[@]}"; do
+    if [[ -f "$OUT_BASE/$d/config-profile.json" ]]; then prev="$OUT_BASE/$d/config-profile.json"; break; fi
+  done
+  if [[ -z "$PRIVATE_KEY" && -n "$prev" ]]; then
     prev_key="$(python3 -c 'import json,sys;r=json.load(open(sys.argv[1]))["inbounds"][0]["streamSettings"]["realitySettings"];print(r["privateKey"])' "$prev" 2>/dev/null || true)"
     prev_sid="$(python3 -c 'import json,sys;r=json.load(open(sys.argv[1]))["inbounds"][0]["streamSettings"]["realitySettings"];print(r["shortIds"][0])' "$prev" 2>/dev/null || true)"
-    if [[ -n "$prev_key" && -n "$prev_sid" ]] && confirm "Bu alan adı için önceki kurulumun anahtarı ve shortId'si bulundu. Aynen kullanılsın mı? (Panelde değişiklik gerekmez)"; then
+    if [[ -n "$prev_key" && -n "$prev_sid" ]] && confirm "Önceki kurulumun anahtarı ve shortId'si bulundu. Aynen kullanılsın mı? (Panelde değişiklik gerekmez)"; then
       PRIVATE_KEY="$prev_key"; SHORT_ID="$prev_sid"
     fi
   fi
@@ -655,7 +695,9 @@ generate_reality_material() {
 
 write_profile() {
   step "Config Profile"
-  local out="$OUT_BASE/$DOMAIN"
+  local out="$OUT_BASE/$DOMAIN" sn="" d
+  for d in "${DOMAINS[@]}"; do sn+="\"$d\", "; done
+  sn="${sn%, }"
   mkdir -p "$out"; chmod 700 "$OUT_BASE" "$out"
   PROFILE_FILE="$out/config-profile.json"
   cat >"$PROFILE_FILE" <<EOF
@@ -676,7 +718,7 @@ write_profile() {
           "show": false,
           "xver": 0,
           "target": "127.0.0.1:${TARGET_PORT}",
-          "serverNames": ["${DOMAIN}"],
+          "serverNames": [${sn}],
           "privateKey": "${PRIVATE_KEY}",
           "shortIds": ["${SHORT_ID}"]
         }
@@ -703,7 +745,8 @@ EOF
   chmod 600 "$PROFILE_FILE"
 
   cat >"$out/node-info.txt" <<EOF
-Alan adı (Address + SNI) : ${DOMAIN}
+Alan adları               : ${DOMAINS[*]}
+  (her alan adı için ayrı Host: Address = SNI = alan adı)
 Port                      : 443
 Inbound etiketi           : ${INBOUND_TAG}
 Reality public key        : ${PUBLIC_KEY}
@@ -720,18 +763,22 @@ EOF
 install_check_tool() {
   cat >/usr/local/bin/selfsteal-check <<'EOF'
 #!/usr/bin/env bash
-# selfsteal-check [ALAN_ADI] — node + self-steal durum kontrolü
-D="${1:-__DOMAIN__}"
-G=$'\e[32m'; R=$'\e[31m'; N=$'\e[0m'
+# selfsteal-check [ALAN_ADI ...] — node + self-steal durum kontrolü
+DLIST=("$@")
+[[ ${#DLIST[@]} -gt 0 ]] || read -r -a DLIST <<<"__DOMAINS__"
+G=$'\e[32m'; R=$'\e[31m'; W=$'\e[1m'; N=$'\e[0m'
 chk() { if [[ "$2" == "$3" ]]; then printf '%s[✓]%s %s: %s\n' "$G" "$N" "$1" "$2"; else printf '%s[✗]%s %s: %s (%s)\n' "$R" "$N" "$1" "${2:-hata}" "$4"; fi; }
 chk "BBR" "$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)" "bbr" "BBR kapalı"
-chk "nginx 127.0.0.1:9443" "$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 --resolve "$D:9443:127.0.0.1" "https://$D:9443/")" "200" "nginx çalışmıyor: systemctl restart nginx"
-chk "Xray 443 -> site" "$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 --resolve "$D:443:127.0.0.1" "https://$D/")" "200" "Config Profile node'a atanmamış olabilir"
 C="$(docker ps --format '{{.Names}}' 2>/dev/null | grep -m1 -i remna)"
 chk "Node konteyneri" "${C:-yok}" "${C:-x}" "docker logs remnanode"
-certbot certificates --cert-name "$D" 2>/dev/null | grep -E 'Expiry Date' | sed 's/^ */    sertifika: /'
+for D in "${DLIST[@]}"; do
+  printf '%s== %s%s\n' "$W" "$D" "$N"
+  chk "nginx 127.0.0.1:9443" "$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 --resolve "$D:9443:127.0.0.1" "https://$D:9443/")" "200" "nginx: systemctl restart nginx"
+  chk "Xray 443 -> site" "$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 --resolve "$D:443:127.0.0.1" "https://$D/")" "200" "profil atanmamış ya da serverNames'te bu alan adı yok"
+  certbot certificates --cert-name "$D" 2>/dev/null | grep -E 'Expiry Date' | sed 's/^ */    sertifika: /'
+done
 EOF
-  sed -i "s/__DOMAIN__/${DOMAIN}/" /usr/local/bin/selfsteal-check
+  sed -i "s/__DOMAINS__/${DOMAINS[*]}/" /usr/local/bin/selfsteal-check
   chmod 755 /usr/local/bin/selfsteal-check
 }
 
@@ -741,7 +788,11 @@ summary() {
   cat "$PROFILE_FILE"
   printf "\n%s2) Nodes →%s bu node'a yeni profili ata ve inbound'u (%s) seç.\n" "$W" "$N" "$INBOUND_TAG"
   printf "%s3) Internal Squads →%s %s inbound'unu aç.\n" "$W" "$N" "$INBOUND_TAG"
-  printf '%s4) Hosts →%s Address: %s  Port: 443  |  Advanced: SNI: %s  Fingerprint: firefox\n' "$W" "$N" "$DOMAIN" "$DOMAIN"
+  printf "%s4) Hosts →%s her alan adı için ayrı bir host (hepsi inbound %s):\n" "$W" "$N" "$INBOUND_TAG"
+  local d
+  for d in "${DOMAINS[@]}"; do
+    printf '     Address: %s  Port: 443  |  Advanced: SNI: %s  Fingerprint: firefox\n' "$d" "$d"
+  done
   printf '%s5) Kontrol:%s profil atandıktan sonra sunucuda %sselfsteal-check%s çalıştır (hepsi ✓ olmalı).\n\n' "$W" "$N" "$W" "$N"
   printf 'Bilgiler: %s\n' "$OUT_BASE/$DOMAIN/node-info.txt"
   printf 'Public key (kontrol için): %s   shortId: %s\n' "$PUBLIC_KEY" "$SHORT_ID"
@@ -756,9 +807,9 @@ main() {
   install_packages
   check_dns
   enable_bbr
-  setup_site
+  setup_sites
   setup_nginx_http
-  issue_certificate
+  issue_certificates
   setup_nginx_tls
   install_docker
   deploy_node
